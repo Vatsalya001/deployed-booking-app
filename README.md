@@ -300,7 +300,7 @@ This will start all services:
 - Backend: http://localhost:5000
 - CRM: http://localhost:5001
 
-## Production Deployment
+## Deployment
 
 ### Environment Variables
 Create a \`.env\` file with the following variables:
@@ -311,11 +311,10 @@ DATABASE_URL=postgresql://user:password@localhost/booking_db
 JWT_SECRET_KEY=your-super-secret-jwt-key
 
 # CRM Configuration
-CRM_BASE_URL=https://your-crm-domain.com
-CRM_BEARER_TOKEN=your-secure-bearer-token
+CRM_BASE_URL= https://booking-app-crm.onrender.com
 
 # Frontend Configuration
-VITE_API_URL=https://your-api-domain.com
+VITE_API_URL= https://deployed-booking-app-new-backend.onrender.com
 \`\`\`
 
 ### Database Migration
