@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:5000
+    depends_on:
+      - backend
+
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=sqlite:///booking.db
+      - JWT_SECRET_KEY=your-jwt-secret-key-change-in-production
+      - CRM_BASE_URL=http://crm:5001
+      - CRM_BEARER_TOKEN=your-static-bearer-token
+    depends_on:
+      - crm
+
+  crm:
+    build: ./crm
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./crm:/app
+    environment:
+      - CRM_BEARER_TOKEN=your-static-bearer-token
