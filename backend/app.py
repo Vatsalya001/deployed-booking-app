@@ -29,7 +29,7 @@ if os.getenv('FLASK_ENV') == 'production':
     ])
 else:
     # Development CORS
-    CORS(app, origins=["http://localhost:3000"])
+    CORS(app, origins=["https://booking-app-frontend-aws8.onrender.com"])
 
 # CRM Configuration
 CRM_BASE_URL = os.getenv('CRM_BASE_URL', 'http://localhost:5001')
