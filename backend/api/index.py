@@ -23,11 +23,11 @@ jwt = JWTManager(app)
 # CORS Configuration
 if os.getenv('FLASK_ENV') == 'production':
     CORS(app, origins=[
-        "https://your-frontend-domain.vercel.app",
-        "https://*.vercel.app"
+        "https://booking-app-frontend-aws8.onrender.com/",
+        "https://*.onrender.com/"
     ])
 else:
-    CORS(app, origins=["http://localhost:3000"])
+    CORS(app, origins=["https://booking-app-frontend-aws8.onrender.com/"])
 
 # CRM Configuration
 CRM_BASE_URL = os.getenv('CRM_BASE_URL', 'http://localhost:5001')
