@@ -1,5 +1,5 @@
 
-# deployed-booking-app
+# Deployed-booking-app
 
 # Booking System for Sessions & Retreats
 
