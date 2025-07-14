@@ -24,8 +24,8 @@ jwt = JWTManager(app)
 if os.getenv('FLASK_ENV') == 'production':
     # Production CORS - replace with your actual frontend URL
     CORS(app, origins=[
-        "https://your-actual-frontend-url.up.railway.app",  # Replace with actual URL
-        "https://*.up.railway.app"  # Allow all Railway subdomains
+        "https://booking-app-frontend-aws8.onrender.com",  # Replace with actual URL
+        "https://*.onrender.com"  # Allow all Railway subdomains
     ])
 else:
     # Development CORS
