@@ -1,0 +1,544 @@
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from flask_cors import CORS
+from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime, timedelta
+import requests
+import os
+from functools import wraps
+
+app = Flask(__name__)
+
+# Configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///booking.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 7)))
+
+# Initialize extensions
+db = SQLAlchemy(app)
+jwt = JWTManager(app)
+
+# CORS Configuration - Updated for production
+if os.getenv('FLASK_ENV') == 'production':
+    # Production CORS - replace with your actual frontend URL
+    CORS(app, origins=[
+        "https://your-actual-frontend-url.up.railway.app",  # Replace with actual URL
+        "https://*.up.railway.app"  # Allow all Railway subdomains
+    ])
+else:
+    # Development CORS
+    CORS(app, origins=["http://localhost:3000"])
+
+# CRM Configuration
+CRM_BASE_URL = os.getenv('CRM_BASE_URL', 'http://localhost:5001')
+CRM_BEARER_TOKEN = os.getenv('CRM_BEARER_TOKEN', 'your-static-bearer-token')
+
+# Models
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    bookings = db.relationship('Booking', backref='user', lazy=True)
+
+class Facilitator(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    specialization = db.Column(db.String(200))
+    bio = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    events = db.relationship('Event', backref='facilitator', lazy=True)
+
+class Event(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    date = db.Column(db.DateTime, nullable=False)
+    duration = db.Column(db.Integer, nullable=False)  # in minutes
+    location = db.Column(db.String(200), nullable=False)
+    price = db.Column(db.Float, nullable=False)
+    max_participants = db.Column(db.Integer, nullable=False)
+    current_participants = db.Column(db.Integer, default=0)
+    facilitator_id = db.Column(db.Integer, db.ForeignKey('facilitator.id'), nullable=False)
+    type = db.Column(db.String(50), nullable=False)  # 'session' or 'retreat'
+    status = db.Column(db.String(50), default='active')  # 'active', 'cancelled', 'completed'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    bookings = db.relationship('Booking', backref='event', lazy=True)
+
+class Booking(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    event_id = db.Column(db.Integer, db.ForeignKey('event.id'), nullable=False)
+    booking_date = db.Column(db.DateTime, default=datetime.utcnow)
+    status = db.Column(db.String(50), default='confirmed')  # 'confirmed', 'cancelled', 'pending'
+    
+    __table_args__ = (db.UniqueConstraint('user_id', 'event_id', name='unique_user_event'),)
+
+# Helper Functions
+def notify_crm(booking_data):
+    """Send booking notification to CRM system"""
+    try:
+        headers = {
+            'Authorization': f'Bearer {CRM_BEARER_TOKEN}',
+            'Content-Type': 'application/json'
+        }
+        
+        response = requests.post(
+            f'{CRM_BASE_URL}/api/notify',
+            json=booking_data,
+            headers=headers,
+            timeout=10
+        )
+        
+        return response.status_code == 200
+    except Exception as e:
+        print(f"CRM notification failed: {str(e)}")
+        return False
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # For demo purposes, we'll skip admin check
+        # In production, implement proper admin role checking
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Authentication Routes
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    try:
+        data = request.get_json()
+        
+        if not data or not data.get('name') or not data.get('email') or not data.get('password'):
+            return jsonify({'message': 'Missing required fields'}), 400
+        
+        if User.query.filter_by(email=data['email']).first():
+            return jsonify({'message': 'Email already registered'}), 400
+        
+        user = User(
+            name=data['name'],
+            email=data['email'],
+            password_hash=generate_password_hash(data['password'])
+        )
+        
+        db.session.add(user)
+        db.session.commit()
+        
+        access_token = create_access_token(identity=user.id)
+        
+        return jsonify({
+            'token': access_token,
+            'user': {
+                'id': user.id,
+                'name': user.name,
+                'email': user.email
+            }
+        }), 201
+        
+    except Exception as e:
+        return jsonify({'message': 'Registration failed', 'error': str(e)}), 500
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    try:
+        data = request.get_json()
+        
+        if not data or not data.get('email') or not data.get('password'):
+            return jsonify({'message': 'Missing email or password'}), 400
+        
+        user = User.query.filter_by(email=data['email']).first()
+        
+        if not user or not check_password_hash(user.password_hash, data['password']):
+            return jsonify({'message': 'Invalid credentials'}), 401
+        
+        access_token = create_access_token(identity=user.id)
+        
+        return jsonify({
+            'token': access_token,
+            'user': {
+                'id': user.id,
+                'name': user.name,
+                'email': user.email
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': 'Login failed', 'error': str(e)}), 500
+
+@app.route('/api/auth/me', methods=['GET'])
+@jwt_required()
+def get_current_user():
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        
+        if not user:
+            return jsonify({'message': 'User not found'}), 404
+        
+        return jsonify({
+            'user': {
+                'id': user.id,
+                'name': user.name,
+                'email': user.email
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': 'Failed to get user info', 'error': str(e)}), 500
+
+# Event Routes
+@app.route('/api/events', methods=['GET'])
+@jwt_required()
+def get_events():
+    try:
+        events = Event.query.filter(
+            Event.status == 'active',
+            Event.date > datetime.utcnow()
+        ).order_by(Event.date).all()
+        
+        events_data = []
+        for event in events:
+            events_data.append({
+                'id': event.id,
+                'title': event.title,
+                'description': event.description,
+                'date': event.date.isoformat(),
+                'duration': event.duration,
+                'location': event.location,
+                'price': event.price,
+                'max_participants': event.max_participants,
+                'current_participants': event.current_participants,
+                'facilitator_name': event.facilitator.name,
+                'facilitator_id': event.facilitator_id,
+                'type': event.type
+            })
+        
+        return jsonify({'events': events_data}), 200
+        
+    except Exception as e:
+        return jsonify({'message': 'Failed to fetch events', 'error': str(e)}), 500
+
+# Booking Routes
+@app.route('/api/bookings', methods=['POST'])
+@jwt_required()
+def create_booking():
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        if not data or not data.get('event_id'):
+            return jsonify({'message': 'Event ID is required'}), 400
+        
+        event = Event.query.get(data['event_id'])
+        if not event:
+            return jsonify({'message': 'Event not found'}), 404
+        
+        if event.current_participants >= event.max_participants:
+            return jsonify({'message': 'Event is fully booked'}), 400
+        
+        if event.date <= datetime.utcnow():
+            return jsonify({'message': 'Cannot book past events'}), 400
+        
+        # Check if user already booked this event
+        existing_booking = Booking.query.filter_by(
+            user_id=user_id,
+            event_id=event.id
+        ).first()
+        
+        if existing_booking:
+            return jsonify({'message': 'You have already booked this event'}), 400
+        
+        # Create booking
+        booking = Booking(
+            user_id=user_id,
+            event_id=event.id
+        )
+        
+        # Update event participant count
+        event.current_participants += 1
+        
+        db.session.add(booking)
+        db.session.commit()
+        
+        # Notify CRM
+        user = User.query.get(user_id)
+        crm_data = {
+            'booking_id': booking.id,
+            'user': {
+                'id': user.id,
+                'name': user.name,
+                'email': user.email
+            },
+            'event': {
+                'id': event.id,
+                'title': event.title,
+                'date': event.date.isoformat(),
+                'type': event.type
+            },
+            'facilitator_id': event.facilitator_id
+        }
+        
+        notify_crm(crm_data)
+        
+        return jsonify({
+            'message': 'Booking created successfully',
+            'booking_id': booking.id
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'Booking failed', 'error': str(e)}), 500
+
+@app.route('/api/bookings', methods=['GET'])
+@jwt_required()
+def get_user_bookings():
+    try:
+        user_id = get_jwt_identity()
+        limit = request.args.get('limit', type=int)
+        
+        query = db.session.query(Booking, Event, Facilitator).join(
+            Event, Booking.event_id == Event.id
+        ).join(
+            Facilitator, Event.facilitator_id == Facilitator.id
+        ).filter(
+            Booking.user_id == user_id
+        ).order_by(Event.date.desc())
+        
+        if limit:
+            query = query.limit(limit)
+        
+        results = query.all()
+        
+        bookings_data = []
+        for booking, event, facilitator in results:
+            bookings_data.append({
+                'id': booking.id,
+                'event_id': event.id,
+                'event_title': event.title,
+                'event_description': event.description,
+                'event_date': event.date.isoformat(),
+                'event_duration': event.duration,
+                'event_location': event.location,
+                'event_price': event.price,
+                'event_type': event.type,
+                'facilitator_name': facilitator.name,
+                'status': booking.status,
+                'booking_date': booking.booking_date.isoformat()
+            })
+        
+        return jsonify({'bookings': bookings_data}), 200
+        
+    except Exception as e:
+        return jsonify({'message': 'Failed to fetch bookings', 'error': str(e)}), 500
+
+@app.route('/api/bookings/<int:booking_id>', methods=['DELETE'])
+@jwt_required()
+def cancel_booking():
+    try:
+        user_id = get_jwt_identity()
+        booking_id = request.view_args['booking_id']
+        
+        booking = Booking.query.filter_by(
+            id=booking_id,
+            user_id=user_id
+        ).first()
+        
+        if not booking:
+            return jsonify({'message': 'Booking not found'}), 404
+        
+        if booking.status == 'cancelled':
+            return jsonify({'message': 'Booking already cancelled'}), 400
+        
+        event = Event.query.get(booking.event_id)
+        if event.date <= datetime.utcnow():
+            return jsonify({'message': 'Cannot cancel past events'}), 400
+        
+        # Update booking status and event participant count
+        booking.status = 'cancelled'
+        event.current_participants -= 1
+        
+        db.session.commit()
+        
+        return jsonify({'message': 'Booking cancelled successfully'}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'Failed to cancel booking', 'error': str(e)}), 500
+
+# Dashboard Routes
+@app.route('/api/dashboard/stats', methods=['GET'])
+@jwt_required()
+def get_dashboard_stats():
+    try:
+        user_id = get_jwt_identity()
+        
+        total_bookings = Booking.query.filter_by(user_id=user_id).count()
+        
+        upcoming_bookings = db.session.query(Booking).join(Event).filter(
+            Booking.user_id == user_id,
+            Event.date > datetime.utcnow(),
+            Booking.status != 'cancelled'
+        ).count()
+        
+        past_bookings = db.session.query(Booking).join(Event).filter(
+            Booking.user_id == user_id,
+            Event.date <= datetime.utcnow()
+        ).count()
+        
+        total_events = Event.query.filter(
+            Event.status == 'active',
+            Event.date > datetime.utcnow()
+        ).count()
+        
+        return jsonify({
+            'total_bookings': total_bookings,
+            'upcoming_bookings': upcoming_bookings,
+            'past_bookings': past_bookings,
+            'total_events': total_events
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': 'Failed to fetch stats', 'error': str(e)}), 500
+
+# Admin Routes (for demo purposes)
+@app.route('/api/admin/events', methods=['POST'])
+def create_event():
+    try:
+        data = request.get_json()
+        
+        required_fields = ['title', 'description', 'date', 'duration', 'location', 'price', 'max_participants', 'facilitator_id', 'type']
+        if not all(field in data for field in required_fields):
+            return jsonify({'message': 'Missing required fields'}), 400
+        
+        event = Event(
+            title=data['title'],
+            description=data['description'],
+            date=datetime.fromisoformat(data['date'].replace('Z', '+00:00')),
+            duration=data['duration'],
+            location=data['location'],
+            price=data['price'],
+            max_participants=data['max_participants'],
+            facilitator_id=data['facilitator_id'],
+            type=data['type']
+        )
+        
+        db.session.add(event)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Event created successfully',
+            'event_id': event.id
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'Failed to create event', 'error': str(e)}), 500
+
+# Initialize database and sample data
+def init_db():
+    with app.app_context():
+        db.create_all()
+        
+        # Create sample facilitators
+        if not Facilitator.query.first():
+            facilitators = [
+                Facilitator(
+                    name="Dr. Sarah Johnson",
+                    email="sarah@example.com",
+                    specialization="Mindfulness & Meditation",
+                    bio="Expert in mindfulness practices with 15+ years experience"
+                ),
+                Facilitator(
+                    name="Michael Chen",
+                    email="michael@example.com",
+                    specialization="Yoga & Wellness",
+                    bio="Certified yoga instructor and wellness coach"
+                ),
+                Facilitator(
+                    name="Emma Rodriguez",
+                    email="emma@example.com",
+                    specialization="Life Coaching",
+                    bio="Professional life coach specializing in personal development"
+                )
+            ]
+            
+            for facilitator in facilitators:
+                db.session.add(facilitator)
+            
+            db.session.commit()
+            
+            # Create sample events
+            sample_events = [
+                Event(
+                    title="Morning Meditation Session",
+                    description="Start your day with a peaceful meditation session focusing on breath awareness and mindfulness techniques.",
+                    date=datetime.utcnow() + timedelta(days=3),
+                    duration=60,
+                    location="Zen Studio, Downtown",
+                    price=25.00,
+                    max_participants=15,
+                    facilitator_id=1,
+                    type="session"
+                ),
+                Event(
+                    title="Weekend Yoga Retreat",
+                    description="A rejuvenating weekend retreat combining yoga, meditation, and nature walks in a serene mountain setting.",
+                    date=datetime.utcnow() + timedelta(days=10),
+                    duration=2880,  # 48 hours
+                    location="Mountain View Retreat Center",
+                    price=299.00,
+                    max_participants=20,
+                    facilitator_id=2,
+                    type="retreat"
+                ),
+                Event(
+                    title="Life Coaching Workshop",
+                    description="Interactive workshop on goal setting, overcoming obstacles, and creating positive life changes.",
+                    date=datetime.utcnow() + timedelta(days=7),
+                    duration=180,
+                    location="Community Center, Room 201",
+                    price=75.00,
+                    max_participants=12,
+                    facilitator_id=3,
+                    type="session"
+                ),
+                Event(
+                    title="Advanced Meditation Retreat",
+                    description="Deep dive into advanced meditation techniques over a transformative 3-day retreat experience.",
+                    date=datetime.utcnow() + timedelta(days=21),
+                    duration=4320,  # 72 hours
+                    location="Silent Valley Retreat",
+                    price=450.00,
+                    max_participants=10,
+                    facilitator_id=1,
+                    type="retreat"
+                ),
+                Event(
+                    title="Stress Relief Session",
+                    description="Learn practical techniques for managing stress and anxiety in daily life through mindful practices.",
+                    date=datetime.utcnow() + timedelta(days=5),
+                    duration=90,
+                    location="Wellness Center",
+                    price=35.00,
+                    max_participants=18,
+                    facilitator_id=2,
+                    type="session"
+                )
+            ]
+            
+            for event in sample_events:
+                db.session.add(event)
+            
+            db.session.commit()
+            print("Database initialized with sample data!")
+
+if __name__ == '__main__':
+    init_db()
+    app.run(debug=True, host='0.0.0.0', port=5000)
