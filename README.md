@@ -1,6 +1,6 @@
-<<<<<<< HEAD
+
 # deployed-booking-app
-=======
+
 # Booking System for Sessions & Retreats
 
 A comprehensive booking system built with React (Vite) frontend, Flask backend, and a separate CRM notification service. The system allows users to browse events, make bookings, and notifies facilitators through a secure CRM integration.
