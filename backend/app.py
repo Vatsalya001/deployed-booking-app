@@ -706,4 +706,4 @@ if __name__ == '__main__':
     print("Starting application initialization...")
     init_db()
     print("Application initialization completed!")
-    app.run(debug=os.getenv('FLASK_DEBUG') == 'True', host='0.0.0.0', port=5000)8
+    app.run(debug=os.getenv('FLASK_DEBUG') == 'True', host='0.0.0.0', port=5000)
