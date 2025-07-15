@@ -1,4 +1,3 @@
-"use client"
 
 import type React from "react"
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
@@ -39,7 +38,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     const token = localStorage.getItem("token")
     if (token) {
-      // api.defaults.headers.common["Authorization"] = `Bearer ${token}`
+      api.defaults.headers.common["Authorization"] = `Bearer ${token}`
       fetchUser()
     } else {
       setLoading(false)
@@ -52,7 +51,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser(response.data.user)
     } catch (error) {
       localStorage.removeItem("token")
-      // delete api.defaults.headers.common["Authorization"]
+      delete api.defaults.headers.common["Authorization"]
     } finally {
       setLoading(false)
     }
@@ -63,7 +62,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const { token, user } = response.data
 
     localStorage.setItem("token", token)
-    // api.defaults.headers.common["Authorization"] = `Bearer ${token}`
+    api.defaults.headers.common["Authorization"] = `Bearer ${token}`
     setUser(user)
   }
 
@@ -72,13 +71,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const { token, user } = response.data
 
     localStorage.setItem("token", token)
-    // api.defaults.headers.common["Authorization"] = `Bearer ${token}`
+    api.defaults.headers.common["Authorization"] = `Bearer ${token}`
     setUser(user)
   }
 
   const logout = () => {
     localStorage.removeItem("token")
-    // delete api.defaults.headers.common["Authorization"]
+    delete api.defaults.headers.common["Authorization"]
     setUser(null)
   }
 
