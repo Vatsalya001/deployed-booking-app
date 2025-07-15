@@ -7,7 +7,7 @@ export const api = axios.create({
   },
 })
 
-// Request interceptor to add token
+// Request interceptor to add token from localStorage
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem("token")
@@ -18,7 +18,7 @@ api.interceptors.request.use(
   },
   (error) => {
     return Promise.reject(error)
-  },
+  }
 )
 
 // Response interceptor to handle errors
@@ -30,5 +30,5 @@ api.interceptors.response.use(
       window.location.href = "/login"
     }
     return Promise.reject(error)
-  },
+  }
 )
