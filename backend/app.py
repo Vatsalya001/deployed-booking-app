@@ -20,6 +20,10 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 7)))
 
+# Debug JWT configuration
+print(f"JWT_SECRET_KEY set: {'Yes' if os.getenv('JWT_SECRET_KEY') else 'No (using default)'}")
+print(f"JWT_ACCESS_TOKEN_EXPIRES: {app.config['JWT_ACCESS_TOKEN_EXPIRES']}")
+
 # Initialize extensions
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
@@ -27,7 +31,12 @@ jwt = JWTManager(app)
 # JWT Error Handlers
 @jwt.expired_token_loader
 def expired_token_callback(jwt_header, jwt_payload):
-    print(f"Token expired: {jwt_payload}")
+    print(f"\n❌ JWT ERROR: TOKEN EXPIRED")
+    print(f"{'='*50}")
+    print(f"JWT Header: {jwt_header}")
+    print(f"JWT Payload: {jwt_payload}")
+    print(f"Expired at: {jwt_payload.get('exp')}")
+    print(f"{'='*50}\n")
     return jsonify({
         'message': 'Token has expired',
         'error': 'token_expired',
@@ -36,7 +45,13 @@ def expired_token_callback(jwt_header, jwt_payload):
 
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
-    print(f"Invalid token: {str(error)}")
+    print(f"\n❌ JWT ERROR: INVALID TOKEN")
+    print(f"{'='*50}")
+    print(f"Error details: {str(error)}")
+    print(f"Error type: {type(error)}")
+    auth_header = request.headers.get('Authorization', 'No header')
+    print(f"Auth header: {auth_header}")
+    print(f"{'='*50}\n")
     return jsonify({
         'message': 'Invalid token',
         'error': 'invalid_token',
@@ -45,7 +60,12 @@ def invalid_token_callback(error):
 
 @jwt.unauthorized_loader
 def missing_token_callback(error):
-    print(f"Missing token: {str(error)}")
+    print(f"\n❌ JWT ERROR: MISSING TOKEN")
+    print(f"{'='*50}")
+    print(f"Error: {str(error)}")
+    auth_header = request.headers.get('Authorization', 'No header')
+    print(f"Auth header received: {auth_header}")
+    print(f"{'='*50}\n")
     return jsonify({
         'message': 'Authorization token is required',
         'error': 'missing_token',
@@ -60,26 +80,31 @@ def check_if_token_revoked(jwt_header, jwt_payload):
 @app.before_request
 def log_request_info():
     if request.path.startswith('/api/'):
+        print(f"\n{'='*60}")
+        print(f"🔍 REQUEST DEBUG - {datetime.utcnow()}")
+        print(f"{'='*60}")
+        
         auth_header = request.headers.get('Authorization', 'No Auth Header')
         content_type = request.headers.get('Content-Type', 'No Content-Type')
         origin = request.headers.get('Origin', 'No Origin')
         
-        print(f"==== REQUEST DEBUG ====")
         print(f"Method: {request.method}")
         print(f"Path: {request.path}")
         print(f"Origin: {origin}")
         print(f"Content-Type: {content_type}")
-        print(f"Auth Header: {auth_header[:50]}..." if len(auth_header) > 50 else f"Auth Header: {auth_header}")
+        print(f"Auth Header: {auth_header[:100]}..." if len(auth_header) > 100 else f"Auth Header: {auth_header}")
         
         # Check if it's a protected endpoint
-        protected_endpoints = ['/api/auth/me', '/api/events', '/api/bookings', '/api/dashboard/stats', '/api/jwt-test']
+        protected_endpoints = ['/api/auth/me', '/api/events', '/api/bookings', '/api/dashboard/stats', '/api/jwt-test', '/api/simple-jwt-test']
         if any(request.path.startswith(endpoint) for endpoint in protected_endpoints):
-            print(f"Protected endpoint accessed: {request.path}")
+            print(f"🔒 PROTECTED ENDPOINT: {request.path}")
             if not auth_header or auth_header == 'No Auth Header':
-                print("WARNING: No authorization header for protected endpoint!")
+                print("❌ WARNING: No authorization header for protected endpoint!")
             elif not auth_header.startswith('Bearer '):
-                print("WARNING: Authorization header doesn't start with 'Bearer '!")
-        print(f"======================")
+                print("❌ WARNING: Authorization header doesn't start with 'Bearer '!")
+            else:
+                print("✅ Authorization header format looks correct")
+        print(f"{'='*60}\n")
 
 # Add JWT debug helper function
 def debug_jwt_token():
@@ -243,6 +268,15 @@ def login():
         
         access_token = create_access_token(identity=user.id)
         
+        # Debug token creation
+        print(f"\n🔑 TOKEN CREATION DEBUG")
+        print(f"{'='*40}")
+        print(f"User ID: {user.id}")
+        print(f"User Email: {user.email}")
+        print(f"Token created length: {len(access_token)}")
+        print(f"Token preview: {access_token[:50]}...")
+        print(f"{'='*40}\n")
+        
         return jsonify({
             'token': access_token,
             'user': {
@@ -253,6 +287,7 @@ def login():
         }), 200
         
     except Exception as e:
+        print(f"❌ LOGIN ERROR: {str(e)}")
         return jsonify({'message': 'Login failed', 'error': str(e)}), 500
 
 @app.route('/api/auth/me', methods=['GET'])
@@ -551,6 +586,29 @@ def health_check():
     except Exception as e:
         return jsonify({'status': 'unhealthy', 'database': 'disconnected', 'error': str(e)}), 500
 
+# Simple JWT test endpoint (no database required)
+@app.route('/api/simple-jwt-test', methods=['GET'])
+@jwt_required()
+def simple_jwt_test():
+    try:
+        user_id = get_jwt_identity()
+        print(f"=== SIMPLE JWT TEST SUCCESS ===")
+        print(f"User ID from token: {user_id}")
+        print(f"Token identity type: {type(user_id)}")
+        return jsonify({
+            'message': 'JWT validation successful',
+            'user_id': user_id,
+            'status': 'success'
+        }), 200
+    except Exception as e:
+        print(f"=== SIMPLE JWT TEST FAILED ===")
+        print(f"Error: {str(e)}")
+        return jsonify({
+            'message': 'JWT validation failed',
+            'error': str(e),
+            'status': 'failed'
+        }), 500
+
 # Add a simple root route to prevent 404 errors on health checks
 @app.route('/', methods=['GET'])
 def root():
@@ -585,6 +643,38 @@ def debug_db():
     except Exception as e:
         return jsonify({
             'database_status': 'error',
+            'error': str(e)
+        }), 500
+
+# Headers debug endpoint - shows all headers received
+@app.route('/api/debug/headers', methods=['GET', 'POST'])
+def debug_headers():
+    try:
+        print(f"\n🔍 HEADERS DEBUG ENDPOINT")
+        print(f"{'='*50}")
+        print(f"Method: {request.method}")
+        print(f"Path: {request.path}")
+        print(f"Headers received:")
+        
+        headers_dict = {}
+        for header_name, header_value in request.headers:
+            headers_dict[header_name] = header_value
+            print(f"  {header_name}: {header_value}")
+        
+        auth_header = request.headers.get('Authorization', None)
+        print(f"\nAuthorization header specifically: {auth_header}")
+        print(f"{'='*50}\n")
+        
+        return jsonify({
+            'method': request.method,
+            'path': request.path,
+            'headers': headers_dict,
+            'authorization_header': auth_header,
+            'has_bearer_token': auth_header.startswith('Bearer ') if auth_header else False
+        }), 200
+    except Exception as e:
+        print(f"❌ Headers debug error: {str(e)}")
+        return jsonify({
             'error': str(e)
         }), 500
 

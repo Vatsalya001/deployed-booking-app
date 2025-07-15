@@ -18,181 +18,143 @@ The logs show successful login operations (200/201 status codes) but subsequent 
 - Frontend requests from different origins may be blocked
 - Limited CORS headers causing browser preflight failures
 
-## Root Cause Analysis
+## Status Update - Post Initial Fixes
 
-### JWT Token Flow Problem
-1. **Login Success**: Users can successfully log in and receive JWT tokens
-2. **Token Storage**: Frontend correctly stores tokens in localStorage  
-3. **Token Transmission**: Frontend sends tokens via Authorization header with Bearer prefix
-4. **Backend Validation**: JWT validation is failing on protected endpoints
+✅ **CORS Issues Resolved**: OPTIONS requests now return 200
+✅ **Missing Endpoints Added**: `/api/jwt-test` and `/api/simple-jwt-test` endpoints created
+❌ **401 Errors Persist**: Protected endpoints still failing after login
 
-### CORS Issues
-- Restrictive CORS origins list
-- Missing required headers for proper CORS handling
-- Limited expose headers causing browser issues
+## New Debugging Features Added
 
-## Fixes Implemented
-
-### 1. **Enhanced CORS Configuration**
+### 1. **Enhanced Request Logging**
 ```python
-# Before (Restrictive)
-CORS(app, 
-     origins=[
-         "https://booking-app-frontend-aws8.onrender.com",
-         "https://deployed-booking-app-new-backend.onrender.com"
-     ],
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-)
-
-# After (More Permissive for Debugging)
-CORS(app, 
-     origins=[
-         "https://booking-app-frontend-aws8.onrender.com",
-         "https://deployed-booking-app-new-backend.onrender.com",
-         "http://localhost:3000",
-         "http://localhost:3001",
-         "*"  # Allow all origins for debugging
-     ],
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Headers", "Access-Control-Allow-Origin"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-     expose_headers=["Content-Type", "Authorization"]
-)
-```
-
-### 2. **Added Missing JWT Test Endpoint**
-```python
-@app.route('/api/jwt-test', methods=['POST', 'GET'])
-@jwt_required()
-def jwt_test():
-    try:
-        user_id = get_jwt_identity()
-        user = User.query.get(user_id)
-        
-        return jsonify({
-            'message': 'JWT token is valid',
-            'user_id': user_id,
-            'user': {
-                'id': user.id,
-                'name': user.name,
-                'email': user.email
-            } if user else None,
-            'token_valid': True
-        }), 200
-    except Exception as e:
-        return jsonify({
-            'message': 'JWT token test failed',
-            'error': str(e),
-            'token_valid': False
-        }), 500
-```
-
-### 3. **Enhanced JWT Error Handling**
-```python
-@jwt.expired_token_loader
-def expired_token_callback(jwt_header, jwt_payload):
-    print(f"Token expired: {jwt_payload}")
-    return jsonify({
-        'message': 'Token has expired',
-        'error': 'token_expired',
-        'expired_at': jwt_payload.get('exp')
-    }), 401
-
-@jwt.invalid_token_loader
-def invalid_token_callback(error):
-    print(f"Invalid token: {str(error)}")
-    return jsonify({
-        'message': 'Invalid token',
-        'error': 'invalid_token',
-        'details': str(error)
-    }), 401
-
-@jwt.unauthorized_loader
-def missing_token_callback(error):
-    print(f"Missing token: {str(error)}")
-    return jsonify({
-        'message': 'Authorization token is required',
-        'error': 'missing_token',
-        'details': 'Authorization header with Bearer token is required'
-    }), 401
-```
-
-### 4. **Enhanced Request Debugging**
-```python
+# Prominent request debugging with emojis and clear formatting
 @app.before_request
 def log_request_info():
-    if request.path.startswith('/api/'):
-        auth_header = request.headers.get('Authorization', 'No Auth Header')
-        content_type = request.headers.get('Content-Type', 'No Content-Type')
-        origin = request.headers.get('Origin', 'No Origin')
-        
-        print(f"==== REQUEST DEBUG ====")
-        print(f"Method: {request.method}")
-        print(f"Path: {request.path}")
-        print(f"Origin: {origin}")
-        print(f"Content-Type: {content_type}")
-        print(f"Auth Header: {auth_header[:50]}..." if len(auth_header) > 50 else f"Auth Header: {auth_header}")
-        
-        # Check if it's a protected endpoint
-        protected_endpoints = ['/api/auth/me', '/api/events', '/api/bookings', '/api/dashboard/stats', '/api/jwt-test']
-        if any(request.path.startswith(endpoint) for endpoint in protected_endpoints):
-            print(f"Protected endpoint accessed: {request.path}")
-            if not auth_header or auth_header == 'No Auth Header':
-                print("WARNING: No authorization header for protected endpoint!")
-            elif not auth_header.startswith('Bearer '):
-                print("WARNING: Authorization header doesn't start with 'Bearer '!")
-        print(f"======================")
+    # Detailed logging with visual indicators
+    print(f"🔍 REQUEST DEBUG - {datetime.utcnow()}")
+    print(f"🔒 PROTECTED ENDPOINT: {request.path}")
+    print(f"✅ Authorization header format looks correct")
 ```
 
-### 5. **JWT Debug Helper Function**
+### 2. **JWT Configuration Debugging**
 ```python
-def debug_jwt_token():
-    auth_header = request.headers.get('Authorization', '')
-    if auth_header.startswith('Bearer '):
-        token = auth_header[7:]  # Remove 'Bearer ' prefix
-        try:
-            from flask_jwt_extended import decode_token
-            decoded = decode_token(token)
-            print(f"JWT Debug - Token decoded successfully: {decoded}")
-            return True
-        except Exception as e:
-            print(f"JWT Debug - Token decode failed: {str(e)}")
-            return False
-    else:
-        print(f"JWT Debug - Invalid auth header format: {auth_header}")
-        return False
+# Debug JWT configuration at startup
+print(f"JWT_SECRET_KEY set: {'Yes' if os.getenv('JWT_SECRET_KEY') else 'No (using default)'}")
+print(f"JWT_ACCESS_TOKEN_EXPIRES: {app.config['JWT_ACCESS_TOKEN_EXPIRES']}")
 ```
 
-## Expected Improvements
+### 3. **Token Creation Debugging**
+```python
+# Debug token creation in login endpoint
+print(f"🔑 TOKEN CREATION DEBUG")
+print(f"User ID: {user.id}")
+print(f"Token created length: {len(access_token)}")
+print(f"Token preview: {access_token[:50]}...")
+```
 
-After implementing these fixes, you should see:
+### 4. **Enhanced JWT Error Handlers**
+```python
+@jwt.invalid_token_loader
+def invalid_token_callback(error):
+    print(f"❌ JWT ERROR: INVALID TOKEN")
+    print(f"Error details: {str(error)}")
+    print(f"Auth header: {auth_header}")
+```
 
-1. **Resolved 401 Errors**: Protected endpoints should now accept valid JWT tokens
-2. **No More 404 Errors**: `/api/jwt-test` endpoint now available
-3. **Better Error Messages**: More descriptive JWT error responses
-4. **Enhanced Debugging**: Detailed request logging for troubleshooting
-5. **CORS Issues Resolved**: More permissive CORS for development/debugging
+### 5. **New Debug Endpoints**
 
-## Frontend Verification
+#### Simple JWT Test (No Database)
+```
+GET /api/simple-jwt-test
+- Tests JWT validation without database dependencies
+- Returns detailed token information
+```
 
-The frontend code appears correct:
-- ✅ Properly stores JWT tokens in localStorage
-- ✅ Correctly sends Authorization header with Bearer prefix
-- ✅ Handles token refresh and logout scenarios
-- ✅ Uses axios interceptors for automatic token attachment
+#### Headers Debug Endpoint
+```
+GET /api/debug/headers
+- Shows all received headers
+- Specifically displays Authorization header
+- No authentication required
+```
+
+## Troubleshooting Steps
+
+### Step 1: Check JWT Configuration
+Deploy the updated code and check logs for:
+```
+JWT_SECRET_KEY set: Yes/No (using default)
+JWT_ACCESS_TOKEN_EXPIRES: 7 days, 0:00:00
+```
+
+### Step 2: Test Token Creation
+Login and check logs for:
+```
+🔑 TOKEN CREATION DEBUG
+User ID: 1
+Token created length: 200+
+Token preview: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+```
+
+### Step 3: Test Headers Transmission
+Call `/api/debug/headers` with authentication and verify:
+- Authorization header is present
+- Header starts with "Bearer "
+- Token matches what was created
+
+### Step 4: Test Simple JWT Validation
+Call `/api/simple-jwt-test` with token to isolate JWT issues from database issues.
+
+### Step 5: Check JWT Error Logs
+Look for specific JWT error messages:
+- `❌ JWT ERROR: MISSING TOKEN`
+- `❌ JWT ERROR: INVALID TOKEN` 
+- `❌ JWT ERROR: TOKEN EXPIRED`
+
+## Potential Root Causes
+
+### 1. **Environment Variable Issue**
+- JWT_SECRET_KEY not set in Render environment
+- Default secret key causing token mismatch
+
+### 2. **Token Format Issue**
+- Frontend not sending proper Bearer format
+- Token corruption during transmission
+
+### 3. **Timing Issue**
+- Token expiring immediately
+- Clock synchronization problems
+
+### 4. **Flask-JWT-Extended Configuration**
+- Version compatibility issues
+- Configuration parameter mismatch
 
 ## Next Steps
 
-1. **Deploy Updated Backend**: Push these changes to your Render deployment
-2. **Test JWT Endpoint**: Use `/api/jwt-test` to verify token validation
-3. **Monitor Logs**: Check new detailed logs for any remaining issues
-4. **Gradually Restrict CORS**: Once working, remove the "*" origin for security
+1. **Deploy Updated Code** with enhanced debugging
+2. **Check Startup Logs** for JWT configuration
+3. **Test Login Flow** and verify token creation logs
+4. **Test Debug Endpoints**:
+   - `/api/debug/headers` (no auth required)
+   - `/api/simple-jwt-test` (with auth)
+5. **Analyze Detailed Logs** to identify specific failure point
 
 ## Files Modified
 
-- `backend/app.py` - Main application file with authentication fixes
-- `backend/api/index.py` - API routes file with matching CORS updates
+- `backend/app.py` - Enhanced with comprehensive debugging
+- `backend/api/index.py` - CORS updates
+- `backend-issues-analysis.md` - This analysis document
 
-The fixes address the core authentication issues causing the 401 errors while providing better debugging capabilities to identify any remaining problems.
+## Expected Debug Output
+
+After deployment, you should see detailed logs like:
+```
+🔍 REQUEST DEBUG - 2025-07-15 11:33:51
+🔒 PROTECTED ENDPOINT: /api/dashboard/stats
+✅ Authorization header format looks correct
+❌ JWT ERROR: INVALID TOKEN
+Error details: [specific error message]
+```
+
+This will help pinpoint exactly where the authentication is failing.
