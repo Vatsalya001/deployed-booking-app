@@ -20,14 +20,29 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_ACCES
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
-# CORS Configuration
-if os.getenv('FLASK_ENV') == 'production':
-    CORS(app, origins=[
-        "https://booking-app-frontend-aws8.onrender.com/",
-        "https://*.onrender.com/"
-    ])
-else:
-    CORS(app, origins=["https://booking-app-frontend-aws8.onrender.com/"])
+# JWT Error Handlers
+@jwt.expired_token_loader
+def expired_token_callback(jwt_header, jwt_payload):
+    return jsonify({'message': 'Token has expired'}), 401
+
+@jwt.invalid_token_loader
+def invalid_token_callback(error):
+    return jsonify({'message': 'Invalid token'}), 401
+
+@jwt.unauthorized_loader
+def missing_token_callback(error):
+    return jsonify({'message': 'Authorization token is required'}), 401
+
+# CORS Configuration - Fixed trailing slashes and added more permissive settings
+CORS(app, 
+     origins=[
+         "https://booking-app-frontend-aws8.onrender.com",
+         "https://deployed-booking-app-new-backend.onrender.com"
+     ],
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+)
 
 # CRM Configuration
 CRM_BASE_URL = os.getenv('CRM_BASE_URL', 'http://localhost:5001')
@@ -188,10 +203,17 @@ def get_current_user():
 @jwt_required()
 def get_events():
     try:
-        events = Event.query.filter(
-            Event.status == 'active',
-            Event.date > datetime.utcnow()
-        ).order_by(Event.date).all()
+        print(f"Events endpoint called by user: {get_jwt_identity()}")
+        
+        # Check if database is accessible
+        try:
+            events = Event.query.filter(
+                Event.status == 'active',
+                Event.date > datetime.utcnow()
+            ).order_by(Event.date).all()
+        except Exception as db_error:
+            print(f"Database query failed: {str(db_error)}")
+            return jsonify({'message': 'Database connection failed', 'error': str(db_error)}), 422
         
         events_data = []
         for event in events:
@@ -287,6 +309,7 @@ def create_booking():
 def get_user_bookings():
     try:
         user_id = get_jwt_identity()
+        print(f"Bookings endpoint called by user: {user_id}")
         limit = request.args.get('limit', type=int)
         
         query = db.session.query(Booking, Event, Facilitator).join(
@@ -362,6 +385,7 @@ def cancel_booking():
 def get_dashboard_stats():
     try:
         user_id = get_jwt_identity()
+        print(f"Dashboard stats endpoint called by user: {user_id}")
         
         total_bookings = Booking.query.filter_by(user_id=user_id).count()
         
@@ -393,10 +417,15 @@ def get_dashboard_stats():
 
 # Initialize database and sample data
 def init_db():
-    with app.app_context():
-        db.create_all()
-        
-        if not Facilitator.query.first():
+    try:
+        with app.app_context():
+            print("Initializing database...")
+            db.create_all()
+            print("Database tables created successfully!")
+            
+            # Check if data already exists
+            if not Facilitator.query.first():
+                print("Creating sample data...")
             facilitators = [
                 Facilitator(
                     name="Dr. Sarah Johnson",
@@ -464,13 +493,30 @@ def init_db():
             
             db.session.commit()
             print("Database initialized with sample data!")
+            else:
+                print("Sample data already exists, skipping creation.")
+                
+    except Exception as e:
+        print(f"Database initialization failed: {str(e)}")
+        # Don't raise the exception to prevent deployment failure
+        # The database might already exist or have permissions issues
+
+# Add a health check endpoint
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    try:
+        # Test database connection
+        db.session.execute('SELECT 1')
+        return jsonify({'status': 'healthy', 'database': 'connected'}), 200
+    except Exception as e:
+        return jsonify({'status': 'unhealthy', 'database': 'disconnected', 'error': str(e)}), 500
 
 # Initialize database
 init_db()
 
-# Export for Vercel
-def handler(request):
-    return app(request.environ, lambda *args: None)
+# This is the main entry point for Vercel
+def handler(event, context):
+    return app
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
