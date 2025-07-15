@@ -28,17 +28,29 @@ jwt = JWTManager(app)
 @jwt.expired_token_loader
 def expired_token_callback(jwt_header, jwt_payload):
     print(f"Token expired: {jwt_payload}")
-    return jsonify({'message': 'Token has expired'}), 401
+    return jsonify({
+        'message': 'Token has expired',
+        'error': 'token_expired',
+        'expired_at': jwt_payload.get('exp')
+    }), 401
 
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
     print(f"Invalid token: {str(error)}")
-    return jsonify({'message': 'Invalid token'}), 401
+    return jsonify({
+        'message': 'Invalid token',
+        'error': 'invalid_token',
+        'details': str(error)
+    }), 401
 
 @jwt.unauthorized_loader
 def missing_token_callback(error):
     print(f"Missing token: {str(error)}")
-    return jsonify({'message': 'Authorization token is required'}), 401
+    return jsonify({
+        'message': 'Authorization token is required',
+        'error': 'missing_token',
+        'details': 'Authorization header with Bearer token is required'
+    }), 401
 
 @jwt.token_in_blocklist_loader
 def check_if_token_revoked(jwt_header, jwt_payload):
@@ -49,18 +61,56 @@ def check_if_token_revoked(jwt_header, jwt_payload):
 def log_request_info():
     if request.path.startswith('/api/'):
         auth_header = request.headers.get('Authorization', 'No Auth Header')
-        print(f"Request: {request.method} {request.path}")
+        content_type = request.headers.get('Content-Type', 'No Content-Type')
+        origin = request.headers.get('Origin', 'No Origin')
+        
+        print(f"==== REQUEST DEBUG ====")
+        print(f"Method: {request.method}")
+        print(f"Path: {request.path}")
+        print(f"Origin: {origin}")
+        print(f"Content-Type: {content_type}")
         print(f"Auth Header: {auth_header[:50]}..." if len(auth_header) > 50 else f"Auth Header: {auth_header}")
+        
+        # Check if it's a protected endpoint
+        protected_endpoints = ['/api/auth/me', '/api/events', '/api/bookings', '/api/dashboard/stats', '/api/jwt-test']
+        if any(request.path.startswith(endpoint) for endpoint in protected_endpoints):
+            print(f"Protected endpoint accessed: {request.path}")
+            if not auth_header or auth_header == 'No Auth Header':
+                print("WARNING: No authorization header for protected endpoint!")
+            elif not auth_header.startswith('Bearer '):
+                print("WARNING: Authorization header doesn't start with 'Bearer '!")
+        print(f"======================")
+
+# Add JWT debug helper function
+def debug_jwt_token():
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        token = auth_header[7:]  # Remove 'Bearer ' prefix
+        try:
+            from flask_jwt_extended import decode_token
+            decoded = decode_token(token)
+            print(f"JWT Debug - Token decoded successfully: {decoded}")
+            return True
+        except Exception as e:
+            print(f"JWT Debug - Token decode failed: {str(e)}")
+            return False
+    else:
+        print(f"JWT Debug - Invalid auth header format: {auth_header}")
+        return False
 
 # CORS Configuration - Fixed trailing slashes and added more permissive settings
 CORS(app, 
      origins=[
          "https://booking-app-frontend-aws8.onrender.com",
-         "https://deployed-booking-app-new-backend.onrender.com"
+         "https://deployed-booking-app-new-backend.onrender.com",
+         "http://localhost:3000",
+         "http://localhost:3001",
+         "*"  # Allow all origins for debugging
      ],
      supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+     allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Headers", "Access-Control-Allow-Origin"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     expose_headers=["Content-Type", "Authorization"]
 )
 
 
@@ -536,6 +586,31 @@ def debug_db():
         return jsonify({
             'database_status': 'error',
             'error': str(e)
+        }), 500
+
+# JWT Test endpoint
+@app.route('/api/jwt-test', methods=['POST', 'GET'])
+@jwt_required()
+def jwt_test():
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        
+        return jsonify({
+            'message': 'JWT token is valid',
+            'user_id': user_id,
+            'user': {
+                'id': user.id,
+                'name': user.name,
+                'email': user.email
+            } if user else None,
+            'token_valid': True
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'message': 'JWT token test failed',
+            'error': str(e),
+            'token_valid': False
         }), 500
 
 # Initialize database and sample data
