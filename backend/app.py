@@ -50,10 +50,6 @@ def expired_token_callback(callback):
     print(f"EXPIRED TOKEN: {callback}")
     return jsonify({"message": "The token has expired."}), 401
 
-@jwt.missing_token_loader
-def missing_token_callback(callback):
-    print(f"MISSING TOKEN: {callback}")
-    return jsonify({"message": "Missing JWT in Authorization header."}), 401
 
 @jwt.token_in_blocklist_loader
 def check_if_token_revoked(jwt_header, jwt_payload):
