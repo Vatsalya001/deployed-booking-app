@@ -1,7 +1,7 @@
 import axios from "axios"
 
 export const api = axios.create({
-  baseURL: "https://deployed-booking-app-new-backend.onrender.com",
+  baseURL: "https://deployed-booking-app-new-backend.onrender.com/api",
   headers: {
     "Content-Type": "application/json",
   },
