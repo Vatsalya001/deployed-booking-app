@@ -9,47 +9,86 @@ import os
 from functools import wraps
 
 app = Flask(__name__)
+# JWT Debug Version 1.1
 
 # Configuration
 database_url = os.getenv('DATABASE_URL', 'sqlite:///booking.db')
 print(f"Using database: {database_url[:20]}...")  # Print first 20 chars for debugging
 
+# Ensure consistent JWT secret key
+jwt_secret = os.getenv('JWT_SECRET_KEY', 'FALLBACK-SECRET-KEY-BOOKING-APP-2025-DO-NOT-USE-IN-PRODUCTION')
+print(f"JWT Secret Key set: {jwt_secret[:10]}... (length: {len(jwt_secret)})")
+
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
+app.config['JWT_SECRET_KEY'] = jwt_secret
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 7)))
 
 # Initialize extensions
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
-# JWT Error Handlers
+# JWT Error Handlers with detailed debugging
 @jwt.expired_token_loader
 def expired_token_callback(jwt_header, jwt_payload):
-    print(f"Token expired: {jwt_payload}")
+    print(f"=== TOKEN EXPIRED ===")
+    print(f"Header: {jwt_header}")
+    print(f"Payload: {jwt_payload}")
+    print(f"===================")
     return jsonify({'message': 'Token has expired'}), 401
 
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
-    print(f"Invalid token: {str(error)}")
-    return jsonify({'message': 'Invalid token'}), 401
+    print(f"=== INVALID TOKEN ===")
+    print(f"Error: {str(error)}")
+    print(f"Error type: {type(error)}")
+    print(f"JWT Secret Key (first 10 chars): {app.config['JWT_SECRET_KEY'][:10]}...")
+    print(f"===================")
+    return jsonify({'message': 'Invalid token', 'debug': str(error)}), 401
 
 @jwt.unauthorized_loader
 def missing_token_callback(error):
-    print(f"Missing token: {str(error)}")
+    print(f"=== MISSING TOKEN ===")
+    print(f"Error: {str(error)}")
+    print(f"===================")
     return jsonify({'message': 'Authorization token is required'}), 401
 
 @jwt.token_in_blocklist_loader
 def check_if_token_revoked(jwt_header, jwt_payload):
     return False  # For now, no tokens are revoked
 
+# Additional JWT verification debugging
+@jwt.additional_claims_loader
+def add_claims_to_jwt(identity):
+    print(f"Adding claims for identity: {identity}")
+    return {}
+
+@jwt.user_identity_loader
+def user_identity_lookup(user):
+    print(f"User identity lookup: {user}")
+    return user
+
+@jwt.user_lookup_loader
+def user_lookup_callback(_jwt_header, jwt_data):
+    identity = jwt_data["sub"]
+    print(f"User lookup for identity: {identity}")
+    return User.query.filter_by(id=identity).one_or_none()
+
 # Request logging for debugging
 @app.before_request
 def log_request_info():
-    if request.path.startswith('/api/'):
+    if request.path.startswith('/api/') and not request.path.startswith('/api/auth/'):
         auth_header = request.headers.get('Authorization', 'No Auth Header')
-        print(f"Request: {request.method} {request.path}")
-        print(f"Auth Header: {auth_header[:50]}..." if len(auth_header) > 50 else f"Auth Header: {auth_header}")
+        print(f"=== REQUEST DEBUG ===")
+        print(f"Method: {request.method}")
+        print(f"Path: {request.path}")
+        print(f"Headers: {dict(request.headers)}")
+        print(f"Auth Header: {auth_header}")
+        print(f"===================")
+        
+        # Force flush the output
+        import sys
+        sys.stdout.flush()
 
 # CORS Configuration - Fixed trailing slashes and added more permissive settings
 CORS(app, 
@@ -162,7 +201,14 @@ def register():
         db.session.add(user)
         db.session.commit()
         
+        print(f"=== TOKEN CREATION ===")
+        print(f"Creating token for user ID: {user.id}")
+        print(f"JWT Secret Key (first 10 chars): {app.config['JWT_SECRET_KEY'][:10]}...")
+        
         access_token = create_access_token(identity=user.id)
+        
+        print(f"Token created: {access_token[:50]}...")
+        print(f"===================")
         
         return jsonify({
             'token': access_token,
@@ -189,7 +235,14 @@ def login():
         if not user or not check_password_hash(user.password_hash, data['password']):
             return jsonify({'message': 'Invalid credentials'}), 401
         
+        print(f"=== LOGIN TOKEN CREATION ===")
+        print(f"Creating token for user ID: {user.id}")
+        print(f"JWT Secret Key (first 10 chars): {app.config['JWT_SECRET_KEY'][:10]}...")
+        
         access_token = create_access_token(identity=user.id)
+        
+        print(f"Token created: {access_token[:50]}...")
+        print(f"==========================")
         
         return jsonify({
             'token': access_token,
@@ -503,6 +556,56 @@ def health_check():
 def root():
     return jsonify({'message': 'Booking App API', 'status': 'running'}), 200
 
+# Simple JWT test endpoint that bypasses decorators
+@app.route('/api/test-jwt/<token>', methods=['GET'])
+def test_jwt_direct(token):
+    from flask_jwt_extended import decode_token
+    try:
+        decoded = decode_token(token)
+        return jsonify({
+            'status': 'valid',
+            'decoded': decoded,
+            'secret_preview': app.config['JWT_SECRET_KEY'][:10] + '...'
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'invalid',
+            'error': str(e),
+            'secret_preview': app.config['JWT_SECRET_KEY'][:10] + '...'
+        }), 400
+
+# JWT test endpoint
+@app.route('/api/jwt-test', methods=['POST'])
+def jwt_test():
+    from flask_jwt_extended import decode_token
+    try:
+        data = request.get_json()
+        token = data.get('token')
+        if not token:
+            return jsonify({'error': 'No token provided'}), 400
+            
+        print(f"=== JWT TEST ===")
+        print(f"Testing token: {token[:50]}...")
+        print(f"Current JWT Secret: {app.config['JWT_SECRET_KEY'][:10]}...")
+        
+        # Try to decode the token manually
+        decoded = decode_token(token)
+        print(f"Token decoded successfully: {decoded}")
+        
+        return jsonify({
+            'status': 'success',
+            'decoded': decoded,
+            'secret_key_preview': app.config['JWT_SECRET_KEY'][:10] + '...'
+        }), 200
+        
+    except Exception as e:
+        print(f"JWT Test failed: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'secret_key_preview': app.config['JWT_SECRET_KEY'][:10] + '...'
+        }), 400
+
 # Debug endpoint to check database contents
 @app.route('/api/debug', methods=['GET'])
 def debug_db():
@@ -527,7 +630,9 @@ def debug_db():
             'facilitators': facilitator_count,
             'events': event_count,
             'users': user_count,
-            'sample_events': event_list
+            'sample_events': event_list,
+            'jwt_secret_preview': app.config['JWT_SECRET_KEY'][:10] + '...',
+            'database_url_preview': app.config['SQLALCHEMY_DATABASE_URI'][:20] + '...'
         }), 200
     except Exception as e:
         return jsonify({
