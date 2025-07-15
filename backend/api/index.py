@@ -37,11 +37,15 @@ def missing_token_callback(error):
 CORS(app, 
      origins=[
          "https://booking-app-frontend-aws8.onrender.com",
-         "https://deployed-booking-app-new-backend.onrender.com"
+         "https://deployed-booking-app-new-backend.onrender.com",
+         "http://localhost:3000",
+         "http://localhost:3001",
+         "*"  # Allow all origins for debugging
      ],
      supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+     allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Headers", "Access-Control-Allow-Origin"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     expose_headers=["Content-Type", "Authorization"]
 )
 
 # CRM Configuration
