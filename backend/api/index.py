@@ -11,8 +11,33 @@ from functools import wraps
 app = Flask(__name__)
 
 # Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///booking.db')
+# PostgreSQL Database Configuration
+database_url = os.getenv('DATABASE_URL', 'sqlite:///booking.db')
+
+# Handle PostgreSQL URL format issues (Render sometimes uses postgres:// instead of postgresql://)
+if database_url.startswith('postgres://'):
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# PostgreSQL-specific configurations
+if 'postgresql' in database_url:
+    # Connection pool settings for PostgreSQL
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_size': 10,
+        'pool_recycle': 120,
+        'pool_pre_ping': True,
+        'max_overflow': 20,
+        'connect_args': {
+            'sslmode': 'require',
+            'connect_timeout': 10,
+        }
+    }
+    print("✅ PostgreSQL configuration applied")
+else:
+    print("ℹ️ Using SQLite configuration")
+
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 7)))
 

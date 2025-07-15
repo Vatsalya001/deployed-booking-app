@@ -11,12 +11,36 @@ from functools import wraps
 app = Flask(__name__)
 
 # Configuration
-# app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///booking.db')
+# PostgreSQL Database Configuration
 database_url = os.getenv('DATABASE_URL', 'sqlite:///booking.db')
-print(f"Using database: {database_url[:20]}...")  # Print first 20 chars for debugging
+
+# Handle PostgreSQL URL format issues (Render sometimes uses postgres:// instead of postgresql://)
+if database_url.startswith('postgres://'):
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+
+print(f"Using database: {database_url[:30]}...")  # Print first 30 chars for debugging
+print(f"Database type: {'PostgreSQL' if 'postgresql' in database_url else 'SQLite' if 'sqlite' in database_url else 'Other'}")
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# PostgreSQL-specific configurations
+if 'postgresql' in database_url:
+    # Connection pool settings for PostgreSQL
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_size': 10,
+        'pool_recycle': 120,
+        'pool_pre_ping': True,
+        'max_overflow': 20,
+        'connect_args': {
+            'sslmode': 'require',
+            'connect_timeout': 10,
+        }
+    }
+    print("✅ PostgreSQL configuration applied")
+else:
+    print("ℹ️ Using SQLite configuration")
+
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 7)))
 
@@ -580,11 +604,95 @@ def create_event():
 @app.route('/api/health', methods=['GET'])
 def health_check():
     try:
-        # Test database connection
-        db.session.execute('SELECT 1')
-        return jsonify({'status': 'healthy', 'database': 'connected'}), 200
+        # Test database connection with PostgreSQL-specific query
+        if 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI']:
+            # PostgreSQL-specific health check
+            result = db.session.execute('SELECT version(), current_database(), current_user')
+            db_info = result.fetchone()
+            
+            return jsonify({
+                'status': 'healthy',
+                'database': 'connected',
+                'database_type': 'PostgreSQL',
+                'database_name': db_info[1] if db_info else 'unknown',
+                'database_user': db_info[2] if db_info else 'unknown',
+                'postgresql_version': db_info[0][:50] + '...' if db_info and db_info[0] else 'unknown'
+            }), 200
+        else:
+            # SQLite or other database
+            db.session.execute('SELECT 1')
+            return jsonify({
+                'status': 'healthy',
+                'database': 'connected',
+                'database_type': 'SQLite'
+            }), 200
+            
     except Exception as e:
-        return jsonify({'status': 'unhealthy', 'database': 'disconnected', 'error': str(e)}), 500
+        return jsonify({
+            'status': 'unhealthy',
+            'database': 'disconnected',
+            'database_type': 'PostgreSQL' if 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI'] else 'Other',
+            'error': str(e),
+            'error_type': type(e).__name__
+        }), 500
+
+# PostgreSQL-specific database info endpoint
+@app.route('/api/database/info', methods=['GET'])
+def database_info():
+    try:
+        if 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI']:
+            # PostgreSQL database statistics
+            queries = {
+                'version': 'SELECT version()',
+                'database_size': "SELECT pg_size_pretty(pg_database_size(current_database()))",
+                'connection_count': 'SELECT count(*) FROM pg_stat_activity',
+                'table_count': "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'",
+            }
+            
+            results = {}
+            for key, query in queries.items():
+                try:
+                    result = db.session.execute(query)
+                    results[key] = result.fetchone()[0]
+                except Exception as e:
+                    results[key] = f"Error: {str(e)}"
+            
+            # Get table information
+            table_info_result = db.session.execute("""
+                SELECT table_name, 
+                       (xpath('/row/cnt/text()', xml_count))[1]::text::int as row_count
+                FROM (
+                    SELECT table_name, 
+                           query_to_xml(format('select count(*) as cnt from %I.%I', table_schema, table_name), false, true, '') as xml_count
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public'
+                    AND table_type = 'BASE TABLE'
+                ) t
+            """)
+            
+            table_info = {}
+            for row in table_info_result:
+                table_info[row[0]] = row[1]
+            
+            return jsonify({
+                'database_type': 'PostgreSQL',
+                'status': 'connected',
+                'database_stats': results,
+                'table_counts': table_info,
+                'timestamp': datetime.utcnow().isoformat()
+            }), 200
+        else:
+            return jsonify({
+                'database_type': 'Not PostgreSQL',
+                'message': 'This endpoint is for PostgreSQL databases only'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to get database info',
+            'details': str(e),
+            'error_type': type(e).__name__
+        }), 500
 
 # Simple JWT test endpoint (no database required)
 @app.route('/api/simple-jwt-test', methods=['GET'])
@@ -707,87 +815,132 @@ def jwt_test():
 def init_db():
     try:
         with app.app_context():
-            print("Initializing database...")
-            db.create_all()
-            print("Database tables created successfully!")
+            print("🔄 Initializing PostgreSQL database...")
             
-            # Check if data already exists
-            if not Facilitator.query.first():
-                print("Creating sample data...")
-                facilitators = [
-                    Facilitator(
-                        name="Dr. Sarah Johnson",
-                        email="sarah@example.com",
-                        specialization="Mindfulness & Meditation",
-                        bio="Expert in mindfulness practices with 15+ years experience"
-                    ),
-                    Facilitator(
-                        name="Michael Chen",
-                        email="michael@example.com",
-                        specialization="Yoga & Wellness",
-                        bio="Certified yoga instructor and wellness coach"
-                    ),
-                    Facilitator(
-                        name="Emma Rodriguez",
-                        email="emma@example.com",
-                        specialization="Life Coaching",
-                        bio="Professional life coach specializing in personal development"
-                    )
-                ]
+            # Test database connection first
+            try:
+                result = db.session.execute('SELECT version()')
+                version_info = result.fetchone()
+                if version_info:
+                    print(f"✅ Database connection successful")
+                    print(f"PostgreSQL version: {version_info[0][:50]}...")
+            except Exception as conn_error:
+                print(f"❌ Database connection test failed: {str(conn_error)}")
+                raise conn_error
+            
+            # Create all tables
+            print("📋 Creating database tables...")
+            db.create_all()
+            print("✅ Database tables created successfully!")
+            
+            # Check if data already exists (PostgreSQL-safe query)
+            try:
+                facilitator_count = db.session.query(Facilitator).count()
+                print(f"📊 Current facilitator count: {facilitator_count}")
                 
-                for facilitator in facilitators:
-                    db.session.add(facilitator)
-                
-                db.session.commit()
-                
-                sample_events = [
-                    Event(
-                        title="Morning Meditation Session",
-                        description="Start your day with a peaceful meditation session focusing on breath awareness and mindfulness techniques.",
-                        date=datetime.utcnow() + timedelta(days=3),
-                        duration=60,
-                        location="Zen Studio, Downtown",
-                        price=25.00,
-                        max_participants=15,
-                        facilitator_id=1,
-                        type="session"
-                    ),
-                    Event(
-                        title="Weekend Yoga Retreat",
-                        description="A rejuvenating weekend retreat combining yoga, meditation, and nature walks in a serene mountain setting.",
-                        date=datetime.utcnow() + timedelta(days=10),
-                        duration=2880,
-                        location="Mountain View Retreat Center",
-                        price=299.00,
-                        max_participants=20,
-                        facilitator_id=2,
-                        type="retreat"
-                    ),
-                    Event(
-                        title="Life Coaching Workshop",
-                        description="Interactive workshop on goal setting, overcoming obstacles, and creating positive life changes.",
-                        date=datetime.utcnow() + timedelta(days=7),
-                        duration=180,
-                        location="Community Center, Room 201",
-                        price=75.00,
-                        max_participants=12,
-                        facilitator_id=3,
-                        type="session"
-                    )
-                ]
-                
-                for event in sample_events:
-                    db.session.add(event)
-                
-                db.session.commit()
-                print("Database initialized with sample data!")
-            else:
-                print("Sample data already exists, skipping creation.")
+                if facilitator_count == 0:
+                    print("📝 Creating sample data...")
+                    
+                    # Create facilitators first
+                    facilitators = [
+                        Facilitator(
+                            name="Dr. Sarah Johnson",
+                            email="sarah@example.com",
+                            specialization="Mindfulness & Meditation",
+                            bio="Expert in mindfulness practices with 15+ years experience"
+                        ),
+                        Facilitator(
+                            name="Michael Chen",
+                            email="michael@example.com",
+                            specialization="Yoga & Wellness",
+                            bio="Certified yoga instructor and wellness coach"
+                        ),
+                        Facilitator(
+                            name="Emma Rodriguez",
+                            email="emma@example.com",
+                            specialization="Life Coaching",
+                            bio="Professional life coach specializing in personal development"
+                        )
+                    ]
+                    
+                    for facilitator in facilitators:
+                        db.session.add(facilitator)
+                    
+                    # Commit facilitators first to get their IDs
+                    db.session.commit()
+                    print("✅ Facilitators created successfully")
+                    
+                    # Get facilitator IDs for events
+                    facilitator_ids = [f.id for f in Facilitator.query.all()]
+                    
+                    sample_events = [
+                        Event(
+                            title="Morning Meditation Session",
+                            description="Start your day with a peaceful meditation session focusing on breath awareness and mindfulness techniques.",
+                            date=datetime.utcnow() + timedelta(days=3),
+                            duration=60,
+                            location="Zen Studio, Downtown",
+                            price=25.00,
+                            max_participants=15,
+                            facilitator_id=facilitator_ids[0],
+                            type="session"
+                        ),
+                        Event(
+                            title="Weekend Yoga Retreat",
+                            description="A rejuvenating weekend retreat combining yoga, meditation, and nature walks in a serene mountain setting.",
+                            date=datetime.utcnow() + timedelta(days=10),
+                            duration=2880,
+                            location="Mountain View Retreat Center",
+                            price=299.00,
+                            max_participants=20,
+                            facilitator_id=facilitator_ids[1],
+                            type="retreat"
+                        ),
+                        Event(
+                            title="Life Coaching Workshop",
+                            description="Interactive workshop on goal setting, overcoming obstacles, and creating positive life changes.",
+                            date=datetime.utcnow() + timedelta(days=7),
+                            duration=180,
+                            location="Community Center, Room 201",
+                            price=75.00,
+                            max_participants=12,
+                            facilitator_id=facilitator_ids[2],
+                            type="session"
+                        )
+                    ]
+                    
+                    for event in sample_events:
+                        db.session.add(event)
+                    
+                    db.session.commit()
+                    print("✅ Sample events created successfully")
+                    print("🎉 Database initialized with sample data!")
+                else:
+                    print("ℹ️ Sample data already exists, skipping creation.")
+                    
+            except Exception as data_error:
+                print(f"❌ Error during data initialization: {str(data_error)}")
+                db.session.rollback()
+                raise data_error
      
     except Exception as e:
-        print(f"Database initialization failed: {str(e)}")
+        print(f"❌ Database initialization failed: {str(e)}")
+        print(f"Error type: {type(e).__name__}")
+        
+        # PostgreSQL-specific error handling
+        if 'psycopg2' in str(type(e)) or 'postgresql' in str(e).lower():
+            print("🔍 PostgreSQL-specific error detected")
+            if 'authentication failed' in str(e).lower():
+                print("💡 Hint: Check your database credentials")
+            elif 'connection' in str(e).lower():
+                print("💡 Hint: Check your database URL and network connectivity")
+            elif 'permission' in str(e).lower():
+                print("💡 Hint: Check database user permissions")
+        
         # Don't raise the exception to prevent deployment failure
-        # The database might already exist or have permissions issues
+        # Log the full error for debugging
+        import traceback
+        traceback.print_exc()
 
 # Initialize database for both development and production
 try:
