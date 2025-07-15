@@ -39,7 +39,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     const token = localStorage.getItem("token")
     if (token) {
-      api.defaults.headers.common["Authorization"] = `Bearer ${token}`
+      // Don't set headers here - let the interceptor handle it
       fetchUser()
     } else {
       setLoading(false)
@@ -52,7 +52,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser(response.data.user)
     } catch (error) {
       localStorage.removeItem("token")
-      delete api.defaults.headers.common["Authorization"]
+      // Don't manipulate headers directly - let the interceptor handle it
     } finally {
       setLoading(false)
     }
@@ -63,7 +63,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const { token, user } = response.data
 
     localStorage.setItem("token", token)
-    api.defaults.headers.common["Authorization"] = `Bearer ${token}`
+    // Don't set headers directly - let the interceptor handle it
     setUser(user)
   }
 
@@ -72,13 +72,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const { token, user } = response.data
 
     localStorage.setItem("token", token)
-    api.defaults.headers.common["Authorization"] = `Bearer ${token}`
+    // Don't set headers directly - let the interceptor handle it
     setUser(user)
   }
 
   const logout = () => {
     localStorage.removeItem("token")
-    delete api.defaults.headers.common["Authorization"]
+    // Don't manipulate headers directly - let the interceptor handle it
     setUser(null)
   }
 

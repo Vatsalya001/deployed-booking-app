@@ -26,15 +26,30 @@ jwt = JWTManager(app)
 # JWT Error Handlers
 @jwt.expired_token_loader
 def expired_token_callback(jwt_header, jwt_payload):
+    print(f"Token expired: {jwt_payload}")
     return jsonify({'message': 'Token has expired'}), 401
 
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
+    print(f"Invalid token: {str(error)}")
     return jsonify({'message': 'Invalid token'}), 401
 
 @jwt.unauthorized_loader
 def missing_token_callback(error):
+    print(f"Missing token: {str(error)}")
     return jsonify({'message': 'Authorization token is required'}), 401
+
+@jwt.token_in_blocklist_loader
+def check_if_token_revoked(jwt_header, jwt_payload):
+    return False  # For now, no tokens are revoked
+
+# Request logging for debugging
+@app.before_request
+def log_request_info():
+    if request.path.startswith('/api/'):
+        auth_header = request.headers.get('Authorization', 'No Auth Header')
+        print(f"Request: {request.method} {request.path}")
+        print(f"Auth Header: {auth_header[:50]}..." if len(auth_header) > 50 else f"Auth Header: {auth_header}")
 
 # CORS Configuration - Fixed trailing slashes and added more permissive settings
 CORS(app, 
@@ -483,18 +498,42 @@ def health_check():
     except Exception as e:
         return jsonify({'status': 'unhealthy', 'database': 'disconnected', 'error': str(e)}), 500
 
-# Global error handler for debugging
-@app.errorhandler(422)
-def handle_unprocessable_entity(e):
-    print(f"422 Error occurred: {str(e)}")
-    return jsonify({'message': 'Unprocessable Entity', 'error': str(e)}), 422
+# Add a simple root route to prevent 404 errors on health checks
+@app.route('/', methods=['GET'])
+def root():
+    return jsonify({'message': 'Booking App API', 'status': 'running'}), 200
 
-@app.errorhandler(Exception)
-def handle_general_exception(e):
-    print(f"Unhandled exception: {str(e)}")
-    import traceback
-    traceback.print_exc()
-    return jsonify({'message': 'Internal server error', 'error': str(e)}), 500
+# Debug endpoint to check database contents
+@app.route('/api/debug', methods=['GET'])
+def debug_db():
+    try:
+        facilitator_count = Facilitator.query.count()
+        event_count = Event.query.count()
+        user_count = User.query.count()
+        
+        # Get sample events
+        events = Event.query.limit(3).all()
+        event_list = []
+        for event in events:
+            event_list.append({
+                'id': event.id,
+                'title': event.title,
+                'date': event.date.isoformat(),
+                'facilitator_id': event.facilitator_id
+            })
+        
+        return jsonify({
+            'database_status': 'connected',
+            'facilitators': facilitator_count,
+            'events': event_count,
+            'users': user_count,
+            'sample_events': event_list
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'database_status': 'error',
+            'error': str(e)
+        }), 500
 
 # Initialize database and sample data
 def init_db():
@@ -606,7 +645,14 @@ def init_db():
         # The database might already exist or have permissions issues
 
 # Initialize database for both development and production
-init_db()
+try:
+    print("Starting application initialization...")
+    init_db()
+    print("Application initialization completed!")
+except Exception as e:
+    print(f"Application initialization failed: {str(e)}")
+    import traceback
+    traceback.print_exc()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
