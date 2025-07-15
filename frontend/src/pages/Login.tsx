@@ -1,7 +1,8 @@
+// src/pages/Login.tsx
 "use client"
 
 import React, { useState } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom" // Import useNavigate
 import { useAuth } from "../contexts/AuthContext"
 import toast from "react-hot-toast"
 import { Mail, Lock, LogIn } from "lucide-react"
@@ -11,8 +12,9 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const { login, user } = useAuth()
-  const navigate = useNavigate()
+  const navigate = useNavigate() // Initialize useNavigate hook
 
+  // Redirect if user is already logged in
   React.useEffect(() => {
     if (user) {
       navigate("/dashboard")
@@ -26,7 +28,8 @@ const Login: React.FC = () => {
     try {
       await login(email, password)
       toast.success("Login successful!")
-      navigate("/dashboard")
+      // CRITICAL FIX: Redirect after successful login
+      navigate("/dashboard") // Navigate to the dashboard or desired post-login page
     } catch (error: any) {
       toast.error(error.response?.data?.message || "Login failed")
     } finally {
