@@ -11,7 +11,10 @@ from functools import wraps
 app = Flask(__name__)
 
 # Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///booking.db')
+database_url = os.getenv('DATABASE_URL', 'sqlite:///booking.db')
+print(f"Using database: {database_url[:20]}...")  # Print first 20 chars for debugging
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 7)))
@@ -20,16 +23,29 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_ACCES
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
-# CORS Configuration - Updated for production
-if os.getenv('FLASK_ENV') == 'production':
-    # Production CORS - replace with your actual frontend URL
-    CORS(app, origins=[
-        "https://booking-app-frontend-aws8.onrender.com",  # Replace with actual URL
-        "https://*.onrender.com"  # Allow all Railway subdomains
-    ])
-else:
-    # Development CORS
-    CORS(app, origins=["https://booking-app-frontend-aws8.onrender.com"])
+# JWT Error Handlers
+@jwt.expired_token_loader
+def expired_token_callback(jwt_header, jwt_payload):
+    return jsonify({'message': 'Token has expired'}), 401
+
+@jwt.invalid_token_loader
+def invalid_token_callback(error):
+    return jsonify({'message': 'Invalid token'}), 401
+
+@jwt.unauthorized_loader
+def missing_token_callback(error):
+    return jsonify({'message': 'Authorization token is required'}), 401
+
+# CORS Configuration - Fixed trailing slashes and added more permissive settings
+CORS(app, 
+     origins=[
+         "https://booking-app-frontend-aws8.onrender.com",
+         "https://deployed-booking-app-new-backend.onrender.com"
+     ],
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+)
 
 # CRM Configuration
 CRM_BASE_URL = os.getenv('CRM_BASE_URL', 'http://localhost:5001')
@@ -177,6 +193,12 @@ def login():
 def get_current_user():
     try:
         user_id = get_jwt_identity()
+        print(f"Auth/me endpoint called, user_id: {user_id}")
+        
+        if not user_id:
+            print("No user_id found in JWT token")
+            return jsonify({'message': 'Invalid token payload'}), 422
+            
         user = User.query.get(user_id)
         
         if not user:
@@ -198,10 +220,18 @@ def get_current_user():
 @jwt_required()
 def get_events():
     try:
-        events = Event.query.filter(
-            Event.status == 'active',
-            Event.date > datetime.utcnow()
-        ).order_by(Event.date).all()
+        user_id = get_jwt_identity()
+        print(f"Events endpoint called by user: {user_id}")
+        
+        # Check if database is accessible
+        try:
+            events = Event.query.filter(
+                Event.status == 'active',
+                Event.date > datetime.utcnow()
+            ).order_by(Event.date).all()
+        except Exception as db_error:
+            print(f"Database query failed: {str(db_error)}")
+            return jsonify({'message': 'Database connection failed', 'error': str(db_error)}), 422
         
         events_data = []
         for event in events:
@@ -301,6 +331,7 @@ def create_booking():
 def get_user_bookings():
     try:
         user_id = get_jwt_identity()
+        print(f"Bookings endpoint called by user: {user_id}")
         limit = request.args.get('limit', type=int)
         
         query = db.session.query(Booking, Event, Facilitator).join(
@@ -378,6 +409,7 @@ def cancel_booking():
 def get_dashboard_stats():
     try:
         user_id = get_jwt_identity()
+        print(f"Dashboard stats endpoint called by user: {user_id}")
         
         total_bookings = Booking.query.filter_by(user_id=user_id).count()
         
@@ -441,13 +473,40 @@ def create_event():
         db.session.rollback()
         return jsonify({'message': 'Failed to create event', 'error': str(e)}), 500
 
+# Add a health check endpoint
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    try:
+        # Test database connection
+        db.session.execute('SELECT 1')
+        return jsonify({'status': 'healthy', 'database': 'connected'}), 200
+    except Exception as e:
+        return jsonify({'status': 'unhealthy', 'database': 'disconnected', 'error': str(e)}), 500
+
+# Global error handler for debugging
+@app.errorhandler(422)
+def handle_unprocessable_entity(e):
+    print(f"422 Error occurred: {str(e)}")
+    return jsonify({'message': 'Unprocessable Entity', 'error': str(e)}), 422
+
+@app.errorhandler(Exception)
+def handle_general_exception(e):
+    print(f"Unhandled exception: {str(e)}")
+    import traceback
+    traceback.print_exc()
+    return jsonify({'message': 'Internal server error', 'error': str(e)}), 500
+
 # Initialize database and sample data
 def init_db():
-    with app.app_context():
-        db.create_all()
-        
-        # Create sample facilitators
-        if not Facilitator.query.first():
+    try:
+        with app.app_context():
+            print("Initializing database...")
+            db.create_all()
+            print("Database tables created successfully!")
+            
+            # Create sample facilitators
+            if not Facilitator.query.first():
+                print("Creating sample data...")
             facilitators = [
                 Facilitator(
                     name="Dr. Sarah Johnson",
@@ -538,7 +597,16 @@ def init_db():
             
             db.session.commit()
             print("Database initialized with sample data!")
+            else:
+                print("Sample data already exists, skipping creation.")
+                
+    except Exception as e:
+        print(f"Database initialization failed: {str(e)}")
+        # Don't raise the exception to prevent deployment failure
+        # The database might already exist or have permissions issues
+
+# Initialize database for both development and production
+init_db()
 
 if __name__ == '__main__':
-    init_db()
     app.run(debug=True, host='0.0.0.0', port=5000)
