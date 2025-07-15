@@ -99,21 +99,18 @@ def debug_jwt_token():
         print(f"JWT Debug - Invalid auth header format: {auth_header}")
         return False
 
-# Fix CORS Configuration (remove wildcard "*"):
-CORS(app, resources={r"/api/*": {"origins": [
-    "https://booking-app-frontend-aws8.onrender.com",
-    "https://deployed-booking-app-new-backend.onrender.com",
-    "http://localhost:3000",
-    "http://localhost:3001"
-]}})
-# Explicitly handle headers, methods, and credentials for all API routes
-CORS(app, supports_credentials=True, origins=[
-    "https://booking-app-frontend-aws8.onrender.com",
-    "https://deployed-booking-app-new-backend.onrender.com",
-    "http://localhost:3000",
-    "http://localhost:3001"
-], allow_headers=["Content-Type", "Authorization"], methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-
+# Combined and corrected CORS Configuration
+CORS(app, resources={r"/api/*": {
+    "origins": [
+        "https://booking-app-frontend-aws8.onrender.com",
+        "https://deployed-booking-app-new-backend.onrender.com",
+        "http://localhost:3000",
+        "http://localhost:3001"
+    ],
+    "supports_credentials": True,
+    "allow_headers": ["Content-Type", "Authorization"],
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+}})
 # CRM Configuration
 CRM_BASE_URL = os.getenv('CRM_BASE_URL', 'http://localhost:5001')
 CRM_BEARER_TOKEN = os.getenv('CRM_BEARER_TOKEN', 'your-static-bearer-token')
