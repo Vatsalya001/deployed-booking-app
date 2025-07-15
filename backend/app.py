@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import requests
 import os
 from functools import wraps
+from jwt.exceptions import ExpiredSignatureError, InvalidTokenError, DecodeError # Import these
 
 app = Flask(__name__)
 
@@ -33,25 +34,26 @@ db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
 # JWT Error Handlers
-@jwt.expired_token_loader
-def expired_token_callback(jwt_header, jwt_payload):
-    print(f"Token expired: {jwt_payload}")
-    return jsonify({'message': 'Token has expired'}), 401
+# Add more specific logging for token issues
+@jwt.unauthorized_loader
+def unauthorized_response(callback):
+    print(f"UNAUTHORIZED: {callback}")
+    return jsonify({"message": "Request does not contain an access token or token is invalid."}), 401
 
 @jwt.invalid_token_loader
-def invalid_token_callback(error):
-    print(f"Invalid token: {str(error)}")
-    return jsonify({'message': 'Invalid token'}), 401
+def invalid_token_callback(callback):
+    print(f"INVALID TOKEN: {callback}")
+    return jsonify({"message": "Signature verification failed or token is malformed."}), 401
 
-@jwt.unauthorized_loader
-def missing_token_callback(error):
-    print(f"Missing token: {str(error)}")
-    # return jsonify({'message': 'Authorization token is required'}), 401
-    return jsonify({
-        'message': 'Authorization token is required',
-        'error': 'missing_token',
-        'details': 'Authorization header with Bearer token is required'
-    }), 401
+@jwt.expired_token_loader
+def expired_token_callback(callback):
+    print(f"EXPIRED TOKEN: {callback}")
+    return jsonify({"message": "The token has expired."}), 401
+
+@jwt.missing_token_loader
+def missing_token_callback(callback):
+    print(f"MISSING TOKEN: {callback}")
+    return jsonify({"message": "Missing JWT in Authorization header."}), 401
 
 @jwt.token_in_blocklist_loader
 def check_if_token_revoked(jwt_header, jwt_payload):
@@ -111,6 +113,7 @@ CORS(app, resources={r"/api/*": {
     "allow_headers": ["Content-Type", "Authorization"],
     "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 }})
+
 # CRM Configuration
 CRM_BASE_URL = os.getenv('CRM_BASE_URL', 'http://localhost:5001')
 CRM_BEARER_TOKEN = os.getenv('CRM_BEARER_TOKEN', 'your-static-bearer-token')
@@ -160,6 +163,18 @@ class Booking(db.Model):
     status = db.Column(db.String(50), default='confirmed')  # 'confirmed', 'cancelled', 'pending'
     
     __table_args__ = (db.UniqueConstraint('user_id', 'event_id', name='unique_user_event'),)
+
+    # Add a to_dict method for easy JSON serialization
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'event_id': self.event_id,
+            'booking_date': self.booking_date.isoformat(),
+            'status': self.status
+            # You might want to include event details here as well,
+            # but for now, just the booking itself.
+        }
 
 # Helper Functions
 def notify_crm(booking_data):
@@ -431,7 +446,11 @@ def get_user_bookings():
         
         return jsonify({'bookings': bookings_data}), 200
         
+    except (ExpiredSignatureError, InvalidTokenError, DecodeError) as e:
+        print(f"JWT processing error in get_user_bookings: {e}")
+        return jsonify({"message": f"Authentication failed: {str(e)}"}), 401
     except Exception as e:
+        print(f"Unexpected error in get_user_bookings: {e}")
         return jsonify({'message': 'Failed to fetch bookings', 'error': str(e)}), 500
 
 # Fix Parameter Handling in cancel_booking:
@@ -503,7 +522,11 @@ def get_dashboard_stats():
             'total_events': total_events
         }), 200
         
+    except (ExpiredSignatureError, InvalidTokenError, DecodeError) as e:
+        print(f"JWT processing error in get_dashboard_stats: {e}")
+        return jsonify({"message": f"Authentication failed: {str(e)}"}), 401
     except Exception as e:
+        print(f"Unexpected error in get_dashboard_stats: {e}")
         return jsonify({'message': 'Failed to fetch stats', 'error': str(e)}), 500
 
 # Admin Routes (for demo purposes)
