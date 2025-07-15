@@ -100,19 +100,19 @@ def debug_jwt_token():
         return False
 
 # Fix CORS Configuration (remove wildcard "*"):
-CORS(app, 
-     origins=[
-         "https://booking-app-frontend-aws8.onrender.com",
-         "https://deployed-booking-app-new-backend.onrender.com",
-         "http://localhost:3000",
-         "http://localhost:3001"
-     ],
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Headers", "Access-Control-Allow-Origin"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-     expose_headers=["Content-Type", "Authorization"]
-)
-
+CORS(app, resources={r"/api/*": {"origins": [
+    "https://booking-app-frontend-aws8.onrender.com",
+    "https://deployed-booking-app-new-backend.onrender.com",
+    "http://localhost:3000",
+    "http://localhost:3001"
+]}})
+# Explicitly handle headers, methods, and credentials for all API routes
+CORS(app, supports_credentials=True, origins=[
+    "https://booking-app-frontend-aws8.onrender.com",
+    "https://deployed-booking-app-new-backend.onrender.com",
+    "http://localhost:3000",
+    "http://localhost:3001"
+], allow_headers=["Content-Type", "Authorization"], methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
 # CRM Configuration
 CRM_BASE_URL = os.getenv('CRM_BASE_URL', 'http://localhost:5001')
@@ -706,4 +706,4 @@ if __name__ == '__main__':
     print("Starting application initialization...")
     init_db()
     print("Application initialization completed!")
-    app.run(debug=os.getenv('FLASK_DEBUG') == 'True', host='0.0.0.0', port=5000)
+    app.run(debug=os.getenv('FLASK_DEBUG') == 'True', host='0.0.0.0', port=5000)8
